@@ -70,9 +70,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ─── CONSTANTS ──────────────────────────────────────────────────────────────
-AUTH_URL = "https://dev-api.endaliahr.com/auth/connect/token"
-BASE_URL = "https://devapi.endaliahr.com/outbound/holidays/api/outbound"
+# ─── CONSTANTS (built dynamically from user's domain) ────────────────────────
+# AUTH_URL and BASE_URL are constructed at login from the user's API domain
 
 # ─── SESSION STATE ───────────────────────────────────────────────────────────
 if "token" not in st.session_state:
@@ -81,12 +80,14 @@ if "client_label" not in st.session_state:
     st.session_state.client_label = ""
 if "absence_types" not in st.session_state:
     st.session_state.absence_types = []
+if "api_domain" not in st.session_state:
+    st.session_state.api_domain = ""
 
 # ─── HELPERS ────────────────────────────────────────────────────────────────
-def get_token(client_id: str, client_secret: str) -> str:
+def get_token(client_id: str, client_secret: str, auth_url: str) -> str:
     """Obtiene Bearer token via OAuth2 client_credentials."""
     resp = requests.post(
-        AUTH_URL,
+        auth_url,
         data={
             "grant_type": "client_credentials",
             "client_id": client_id,
@@ -120,10 +121,10 @@ def api_get_all(token: str, url: str, params: dict = {}) -> list:
     return results
 
 
-def load_absence_types(token: str) -> list:
+def load_absence_types(token: str, base_url: str) -> list:
     """Carga los tipos de ausencia activos."""
     try:
-        items = api_get_all(token, f"{BASE_URL}/v1/absenteism/types/names")
+        items = api_get_all(token, f"{base_url}/v1/absenteism/types/names")
         types = []
         for t in items:
             name = t.get("Name") or t.get("name") or t.get("TypeName") or str(t)
@@ -151,7 +152,7 @@ def default_quarter_range():
 
 
 # ─── TOPBAR ─────────────────────────────────────────────────────────────────
-badge = f'<span style="background:rgba(82,183,136,0.15);border:1px solid rgba(82,183,136,0.3);padding:4px 12px;border-radius:20px;color:#52b788;font-size:11px;">● {st.session_state.client_label}</span>' if st.session_state.token else ""
+badge = f'<span style="background:rgba(82,183,136,0.15);border:1px solid rgba(82,183,136,0.3);padding:4px 12px;border-radius:20px;color:#52b788;font-size:11px;">● {st.session_state.client_label} · {st.session_state.api_domain}</span>' if st.session_state.token else ""
 st.markdown(f"""
 <div class="topbar">
   <div class="topbar-brand"><span class="topbar-dot"></span> Saldos y Consumos por Absentismo</div>
@@ -170,20 +171,25 @@ if not st.session_state.token:
         st.markdown('<div class="login-title">Acceso a la herramienta</div>', unsafe_allow_html=True)
         st.markdown('<div class="login-sub">Introduce las credenciales de API proporcionadas por Endalia para tu organización.</div>', unsafe_allow_html=True)
 
+        api_domain    = st.text_input("Dominio API", placeholder="ej. miempresa-api.endaliahr.com", label_visibility="visible", help="El dominio de tu API de Endalia, sin https://")
         client_id     = st.text_input("Client ID", placeholder="Tu Client ID de Endalia", label_visibility="visible")
         client_secret = st.text_input("Client Secret", type="password", placeholder="cs_••••••••••••", label_visibility="visible")
 
         if st.button("Conectar", use_container_width=True, type="primary"):
-            if not client_id or not client_secret:
-                st.error("Introduce Client ID y Client Secret.")
+            if not api_domain or not client_id or not client_secret:
+                st.error("Introduce el Dominio API, Client ID y Client Secret.")
             else:
+                domain = api_domain.strip().rstrip("/").replace("https://", "").replace("http://", "")
+                auth_url = f"https://{domain}/auth/connect/token"
+                base_url = f"https://{domain}/outbound/holidays/api/outbound"
                 with st.spinner("Autenticando..."):
                     try:
-                        token = get_token(client_id, client_secret)
+                        token = get_token(client_id, client_secret, auth_url)
                         st.session_state.token = token
                         st.session_state.client_label = client_id
+                        st.session_state.api_domain = domain
                         with st.spinner("Cargando tipos de ausencia..."):
-                            st.session_state.absence_types = load_absence_types(token)
+                            st.session_state.absence_types = load_absence_types(token, base_url)
                         st.success("Conectado correctamente.")
                         st.rerun()
                     except Exception as e:
@@ -207,6 +213,7 @@ with hcol2:
     if st.button("← Cambiar cuenta", use_container_width=True):
         st.session_state.token = None
         st.session_state.client_label = ""
+        st.session_state.api_domain = ""
         st.session_state.absence_types = []
         st.rerun()
 
@@ -247,7 +254,7 @@ if run:
                 limits_params["typeCodes"] = selected_type_code
             limits = api_get_all(
                 st.session_state.token,
-                f"{BASE_URL}/v2/absenteism/period/employee-limits",
+                f"https://{st.session_state.api_domain}/outbound/holidays/api/outbound/v2/absenteism/period/employee-limits",
                 limits_params,
             )
         except Exception as e:
@@ -263,7 +270,7 @@ if run:
             req_params = {"status": "4"}  # Solo validados
             requests_data = api_get_all(
                 st.session_state.token,
-                f"{BASE_URL}/v1/absenteism/requests-detailed/{date_from.strftime('%Y-%m-%d')}/{date_to.strftime('%Y-%m-%d')}",
+                f"https://{st.session_state.api_domain}/outbound/holidays/api/outbound/v1/absenteism/requests-detailed/{date_from.strftime('%Y-%m-%d')}/{date_to.strftime('%Y-%m-%d')}",
                 req_params,
             )
         except Exception as e:
