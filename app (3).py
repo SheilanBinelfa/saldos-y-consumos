@@ -342,37 +342,20 @@ if run:
         display_df = display_df[mask]
 
     # ─── TABLE ──────────────────────────────────────────────────────────────
-    def style_table(df):
-        def badge_pagar(val):
-            row = df.loc[df["A pagar (d)"] == val].iloc[0] if not df[df["A pagar (d)"] == val].empty else None
-            maximo = row["Máximo (d)"] if row is not None else 0
-            if val >= maximo and maximo > 0:
-                return "background-color: #fdecea; color: #c0392b; border-radius: 20px; font-weight: 500;"
-            elif val > 0:
-                return "background-color: #fff0e0; color: #e07a1f; border-radius: 20px; font-weight: 500;"
-            else:
-                return "background-color: #d8f3e3; color: #2d6a4f; border-radius: 20px; font-weight: 500;"
-
-        return (
-            df.style
-            .format({
-                "Máximo (d)":    "{:.2f}",
-                "Consumido (d)": "{:.2f}",
-                "A pagar (d)":   "{:.2f}",
-            })
-            .applymap(
-                lambda v: (
-                    "background-color:#fdecea;color:#c0392b;font-weight:500;" if v > 0 and v == display_df.loc[display_df["A pagar (d)"] == v, "Máximo (d)"].values[0] if len(display_df.loc[display_df["A pagar (d)"] == v]) > 0 else False
-                    else "background-color:#fff0e0;color:#e07a1f;font-weight:500;" if v > 0
-                    else "background-color:#d8f3e3;color:#2d6a4f;font-weight:500;"
-                ),
-                subset=["A pagar (d)"]
-            )
-            .set_properties(**{"font-size": "13px"})
-        )
+    def color_pagar(val):
+        if val <= 0:
+            return "background-color:#d8f3e3;color:#2d6a4f;font-weight:500;"
+        elif val < display_df["Máximo (d)"].max():
+            return "background-color:#fff0e0;color:#e07a1f;font-weight:500;"
+        else:
+            return "background-color:#fdecea;color:#c0392b;font-weight:500;"
 
     st.dataframe(
-        display_df,
+        display_df.style.applymap(color_pagar, subset=["A pagar (d)"]).format({
+            "Máximo (d)":    "{:.2f}",
+            "Consumido (d)": "{:.2f}",
+            "A pagar (d)":   "{:.2f}",
+        }),
         use_container_width=True,
         height=min(600, 60 + len(display_df) * 38),
         column_config={
