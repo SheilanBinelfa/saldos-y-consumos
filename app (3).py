@@ -238,7 +238,7 @@ if run:
     s2.markdown(f'<div class="stat-card"><div class="stat-label">Sin disfrute</div><div class="stat-value">{sin_disfrute}</div></div>', unsafe_allow_html=True)
     s3.markdown(f'<div class="stat-card"><div class="stat-label">Disfrute parcial</div><div class="stat-value">{con_parcial}</div></div>', unsafe_allow_html=True)
     s4.markdown(f'<div class="stat-card"><div class="stat-label">Sin máximo definido</div><div class="stat-value">{sin_maximo}</div></div>', unsafe_allow_html=True)
-    s5.markdown(f'<div class="stat-card highlight"><div class="stat-label">Total días no disfrutados</div><div class="stat-value">{total_nd:.2f} d</div></div>', unsafe_allow_html=True)
+    s5.markdown(f'<div class="stat-card highlight"><div class="stat-label">Total no disfrutados</div><div class="stat-value">{total_nd:.2f} d</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -253,13 +253,16 @@ if run:
         export_df = df[['Código','Empleado','Empresa','Centro de trabajo','Convenio',
                         'Máximo','Disfrutados','No disfrutados']].copy()
         export_df.columns = ['Código','Empleado','Empresa','Centro de trabajo','Convenio',
-                             'Máximo (d)','Disfrutados (d)','Días no disfrutados']
-        csv = export_df.to_csv(index=False, sep=";", decimal=",", encoding="utf-8-sig")
+                             'Máximo','Disfrutados','No disfrutados']
+        import io as _io
+        buf = _io.BytesIO()
+        export_df.to_excel(buf, index=False, engine='openpyxl')
+        buf.seek(0)
         st.download_button(
-            label="↓ Exportar CSV",
-            data=csv,
-            file_name=f"NoDisfrutados_{tipo_sel.replace(' ','_')}_{date_from}_{date_to}.csv",
-            mime="text/csv",
+            label="↓ Exportar Excel",
+            data=buf.getvalue(),
+            file_name=f"NoDisfrutados_{tipo_sel.replace(' ','_')}_{date_from}_{date_to}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
 
@@ -297,9 +300,9 @@ if run:
             "Empleado":          st.column_config.TextColumn("Empleado", width="large"),
             "Centro de trabajo": st.column_config.TextColumn("Centro", width="medium"),
             "Convenio":          st.column_config.TextColumn("Convenio", width="medium"),
-            "Máximo":            st.column_config.NumberColumn("Máximo (d)", format="%.2f", width="small"),
-            "Disfrutados":       st.column_config.NumberColumn("Disfrutados (d)", format="%.2f", width="small"),
-            "No disfrutados":    st.column_config.NumberColumn("No disfrutados (d)", format="%.2f", width="small"),
+            "Máximo":            st.column_config.NumberColumn("Máximo", format="%.2f", width="small"),
+            "Disfrutados":       st.column_config.NumberColumn("Disfrutados", format="%.2f", width="small"),
+            "No disfrutados":    st.column_config.NumberColumn("No disfrutados", format="%.2f", width="small"),
         },
         hide_index=True,
     )
