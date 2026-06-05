@@ -117,7 +117,8 @@ if not (f_empleados and f_saldos and f_abs):
 # ── READ FILES (cached) ───────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
 def read_excel(file_bytes, name):
-    return pd.read_excel(file_bytes)
+    import io
+    return pd.read_excel(io.BytesIO(file_bytes))
 
 try:
     with st.spinner("Leyendo ficheros..."):
