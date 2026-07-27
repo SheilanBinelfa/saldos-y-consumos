@@ -191,6 +191,24 @@ def format_duracion(minutos, jornada_min=MINUTOS_POR_DIA):
         partes.append(f"{int(horas)}h")
     return " y ".join(partes) if partes else "0h"
 
+def format_duracion_separado(dias_min, horas_min, jornada_min=MINUTOS_POR_DIA):
+    """Suma por separado los minutos que vinieron registrados en Días y en Horas,
+    SIN plegar un bucket en otro (ej. 1 día + 2 tramos de 4h se muestra como
+    '1d y 8h', no como '2d'), para que se corresponda tal cual con lo que se ve
+    en el informe de Absentismos."""
+    if pd.isna(dias_min):
+        dias_min = 0
+    if pd.isna(horas_min):
+        horas_min = 0
+    dias = round(dias_min / jornada_min)
+    horas = round(horas_min / MINUTOS_POR_HORA)
+    partes = []
+    if dias > 0:
+        partes.append(f"{int(dias)}d")
+    if horas > 0:
+        partes.append(f"{int(horas)}h")
+    return " y ".join(partes) if partes else "0h"
+
 # ── FILTERS ───────────────────────────────────────────────────────────────────
 st.markdown("#### ⚙️ Configuración")
 
@@ -259,10 +277,21 @@ if run:
             (df_abs['Estado'] == 'Validado') &
             (df_abs['Fecha inicio'] >= pd.Timestamp(date_from)) &
             (df_abs['Fecha inicio'] <= pd.Timestamp(date_to))
-        ][['Código','Duración total en minutos']].copy()
+        ][['Código','Unidad','Duración total en minutos']].copy()
 
-        consumo = df_abs_f.groupby('Código')['Duración total en minutos'].sum().reset_index()
-        consumo.columns = ['Código','Disfrutados_min']
+        # Sumamos por separado los registros en Días y en Horas (sin plegar unos en otros),
+        # para que "Disfrutados" refleje tal cual lo que hay en el informe de Absentismos
+        # (ej. 1 día + dos tramos de 4h se muestra como "1d y 8h", no como "2d")
+        pivot = df_abs_f.pivot_table(
+            index='Código', columns='Unidad', values='Duración total en minutos',
+            aggfunc='sum', fill_value=0
+        )
+        for col in ['Días', 'Horas']:
+            if col not in pivot.columns:
+                pivot[col] = 0
+        consumo = pivot[['Días', 'Horas']].reset_index()
+        consumo.columns = ['Código', 'Disfrutados_dias_min', 'Disfrutados_horas_min']
+        consumo['Disfrutados_min'] = consumo['Disfrutados_dias_min'] + consumo['Disfrutados_horas_min']
 
         # Merge
         df = df_emp_f.merge(df_sal_f, on='Código', how='left')
@@ -270,12 +299,17 @@ if run:
 
         df['Maximo_min']       = df['Maximo_min'].fillna(0)
         df['Disfrutados_min']  = df['Disfrutados_min'].fillna(0)
+        df['Disfrutados_dias_min']  = df['Disfrutados_dias_min'].fillna(0)
+        df['Disfrutados_horas_min'] = df['Disfrutados_horas_min'].fillna(0)
         df['No_disfrutados_min'] = (df['Maximo_min'] - df['Disfrutados_min']).clip(lower=0)
         df['sin_maximo']       = df['Maximo_min'] == 0
 
         # Columnas formateadas para mostrar/exportar
         df['Máximo']         = df['Maximo_min'].apply(format_duracion)
-        df['Disfrutados']    = df['Disfrutados_min'].apply(format_duracion)
+        df['Disfrutados']    = df.apply(
+            lambda r: format_duracion_separado(r['Disfrutados_dias_min'], r['Disfrutados_horas_min']),
+            axis=1
+        )
         df['No disfrutados'] = df['No_disfrutados_min'].apply(format_duracion)
 
     # ── STATS ─────────────────────────────────────────────────────────────────
