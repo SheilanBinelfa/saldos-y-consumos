@@ -131,11 +131,18 @@ except Exception as e:
     st.error(f"Error leyendo los ficheros: {e}")
     st.stop()
 
-# Normalizar Código a texto en los tres ficheros (evita error de merge por dtypes distintos,
-# ej. "00781" leído como texto en un fichero y como número 781 en otro)
+# Normalizar Código de forma consistente entre ficheros (evita mismatches por ceros a la
+# izquierda: un fichero puede traer "01661" como texto y otro "1661" como número)
+def normalizar_codigo(x):
+    s = str(x).strip()
+    try:
+        return str(int(float(s)))  # "01661" -> 1661.0 -> "1661" ; "1661" -> "1661"
+    except (ValueError, TypeError):
+        return s
+
 for _df in (df_emp, df_sal, df_abs):
     if 'Código' in _df.columns:
-        _df['Código'] = _df['Código'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+        _df['Código'] = _df['Código'].apply(normalizar_codigo)
 
 # Validate columns
 missing_emp = {'Empleado','Código','Estado','Convenio'} - set(df_emp.columns)
