@@ -58,14 +58,16 @@ with st.expander("📋 ¿Cómo usar esta herramienta?", expanded=False):
 
     **Export 2 — Informe Saldos y consumos** *(Vacaciones y ausencias → Informes → Saldos y consumos)*
     - Filtra por el tipo de ausencia (ej. "Asuntos propios") y periodo
-    - Añade los campos extra: **Validados**, **Pendientes de validar**, **Pendientes de solicitar**
+    - Añade los campos extra: **Unidad**, **Validados**, **Pendientes de validar**, **Pendientes de solicitar**
 
     **Export 3 — Informe Absentismos** *(Vacaciones y ausencias → Informes → Absentismos)*
     - Filtra por el mismo tipo de ausencia · Añade el campo **Código** del empleado
-    - Campos necesarios: Código, Tipo, Estado, Fecha inicio, Duración
+    - Campos necesarios: Código, Tipo, Estado, Fecha inicio, Duración, **Unidad**, **Duración total en minutos**
 
-    **Resultado:** días no disfrutados por empleado en el rango de fechas indicado,
+    **Resultado:** días/horas no disfrutados por empleado en el rango de fechas indicado,
     incluyendo los que tienen consumo 0 y no aparecen en los informes estándar.
+    Los importes se calculan en minutos internamente (1 día = 480 min, 1 hora = 60 min)
+    y se muestran en formato mixto (ej. "2d y 3h") para que días y horas sean siempre comparables.
     """)
 
 st.divider()
@@ -131,21 +133,50 @@ except Exception as e:
 
 # Validate columns
 missing_emp = {'Empleado','Código','Estado','Convenio'} - set(df_emp.columns)
-missing_sal = {'Código','Tipo','Máximo','Validados'} - set(df_sal.columns)
-missing_abs = {'Código','Tipo','Estado','Fecha inicio','Duración'} - set(df_abs.columns)
+missing_sal = {'Código','Tipo','Máximo','Unidad','Validados'} - set(df_sal.columns)
+missing_abs = {'Código','Tipo','Estado','Fecha inicio','Duración','Unidad','Duración total en minutos'} - set(df_abs.columns)
 
 if missing_emp:
     st.error(f"Al informe de Empleados le faltan columnas: {missing_emp}")
     st.stop()
 if missing_sal:
-    st.error(f"Al informe de Saldos y consumos le faltan columnas: {missing_sal}. Asegúrate de añadir Validados, Pendientes de validar y Pendientes de solicitar antes de exportar.")
+    st.error(f"Al informe de Saldos y consumos le faltan columnas: {missing_sal}. Asegúrate de añadir Unidad, Validados, Pendientes de validar y Pendientes de solicitar antes de exportar.")
     st.stop()
 if missing_abs:
-    st.error(f"Al informe de Absentismos le faltan columnas: {missing_abs}. Asegúrate de añadir el campo Código.")
+    st.error(f"Al informe de Absentismos le faltan columnas: {missing_abs}. Asegúrate de añadir Código, Unidad y Duración total en minutos.")
     st.stop()
 
 st.success("✓ Los tres ficheros se han cargado correctamente.")
 st.divider()
+
+# ── HELPERS: conversión de unidades ──────────────────────────────────────────
+MINUTOS_POR_DIA = 480   # 1 jornada estándar = 8h
+MINUTOS_POR_HORA = 60
+
+def a_minutos(valor, unidad):
+    """Convierte un valor (Máximo, Duración, etc.) a minutos según su Unidad."""
+    if pd.isna(valor):
+        return 0.0
+    u = str(unidad).strip().lower()
+    if u.startswith('d'):
+        return valor * MINUTOS_POR_DIA
+    elif u.startswith('h'):
+        return valor * MINUTOS_POR_HORA
+    return valor  # por si ya viniera en minutos u otra unidad no prevista
+
+def format_duracion(minutos, jornada_min=MINUTOS_POR_DIA):
+    """Formatea minutos a texto tipo '2d', '3h' o '2d y 3h'."""
+    if pd.isna(minutos) or minutos <= 0:
+        return "0h"
+    minutos = round(minutos)
+    dias, resto = divmod(minutos, jornada_min)
+    horas = resto // MINUTOS_POR_HORA
+    partes = []
+    if dias > 0:
+        partes.append(f"{int(dias)}d")
+    if horas > 0:
+        partes.append(f"{int(horas)}h")
+    return " y ".join(partes) if partes else "0h"
 
 # ── FILTERS ───────────────────────────────────────────────────────────────────
 st.markdown("#### ⚙️ Configuración")
@@ -199,38 +230,47 @@ if run:
             st.warning("No hay empleados activos con los convenios seleccionados.")
             st.stop()
 
-        # Filter saldos → máximo por empleado
+        # Filter saldos → máximo por empleado, convertido a minutos según su propia Unidad
         df_sal_f = df_sal[df_sal['Tipo'] == tipo_sel][
-            ['Código','Máximo']
+            ['Código','Máximo','Unidad']
         ].drop_duplicates(subset='Código').copy()
+        df_sal_f['Maximo_min'] = df_sal_f.apply(
+            lambda r: a_minutos(r['Máximo'], r['Unidad']), axis=1
+        )
+        df_sal_f = df_sal_f[['Código','Maximo_min']]
 
-        # Filter absentismos → consumo en rango de fechas
+        # Filter absentismos → consumo en rango de fechas (ya viene en minutos totales)
         df_abs['Fecha inicio'] = pd.to_datetime(df_abs['Fecha inicio'], errors='coerce')
         df_abs_f = df_abs[
             (df_abs['Tipo'] == tipo_sel) &
             (df_abs['Estado'] == 'Validado') &
             (df_abs['Fecha inicio'] >= pd.Timestamp(date_from)) &
             (df_abs['Fecha inicio'] <= pd.Timestamp(date_to))
-        ][['Código','Duración']].copy()
+        ][['Código','Duración total en minutos']].copy()
 
-        consumo = df_abs_f.groupby('Código')['Duración'].sum().reset_index()
-        consumo.columns = ['Código','Disfrutados']
+        consumo = df_abs_f.groupby('Código')['Duración total en minutos'].sum().reset_index()
+        consumo.columns = ['Código','Disfrutados_min']
 
         # Merge
         df = df_emp_f.merge(df_sal_f, on='Código', how='left')
         df = df.merge(consumo, on='Código', how='left')
 
-        df['Máximo']          = df['Máximo'].fillna(0)
-        df['Disfrutados']     = df['Disfrutados'].fillna(0)
-        df['No disfrutados']  = (df['Máximo'] - df['Disfrutados']).clip(lower=0)
-        df['sin_maximo']      = df['Máximo'] == 0
+        df['Maximo_min']       = df['Maximo_min'].fillna(0)
+        df['Disfrutados_min']  = df['Disfrutados_min'].fillna(0)
+        df['No_disfrutados_min'] = (df['Maximo_min'] - df['Disfrutados_min']).clip(lower=0)
+        df['sin_maximo']       = df['Maximo_min'] == 0
+
+        # Columnas formateadas para mostrar/exportar
+        df['Máximo']         = df['Maximo_min'].apply(format_duracion)
+        df['Disfrutados']    = df['Disfrutados_min'].apply(format_duracion)
+        df['No disfrutados'] = df['No_disfrutados_min'].apply(format_duracion)
 
     # ── STATS ─────────────────────────────────────────────────────────────────
     total        = len(df)
-    sin_disfrute = len(df[df['Disfrutados'] == 0])
-    con_parcial  = len(df[(df['Disfrutados'] > 0) & (df['No disfrutados'] > 0)])
+    sin_disfrute = len(df[df['Disfrutados_min'] == 0])
+    con_parcial  = len(df[(df['Disfrutados_min'] > 0) & (df['No_disfrutados_min'] > 0)])
     sin_maximo   = len(df[df['sin_maximo']])
-    total_nd     = df['No disfrutados'].sum()
+    total_nd_min = df['No_disfrutados_min'].sum()
 
     st.markdown("<br>", unsafe_allow_html=True)
     s1, s2, s3, s4, s5 = st.columns(5)
@@ -238,7 +278,7 @@ if run:
     s2.markdown(f'<div class="stat-card"><div class="stat-label">Sin disfrute</div><div class="stat-value">{sin_disfrute}</div></div>', unsafe_allow_html=True)
     s3.markdown(f'<div class="stat-card"><div class="stat-label">Disfrute parcial</div><div class="stat-value">{con_parcial}</div></div>', unsafe_allow_html=True)
     s4.markdown(f'<div class="stat-card"><div class="stat-label">Sin máximo definido</div><div class="stat-value">{sin_maximo}</div></div>', unsafe_allow_html=True)
-    s5.markdown(f'<div class="stat-card highlight"><div class="stat-label">Total no disfrutados</div><div class="stat-value">{total_nd:.2f} d</div></div>', unsafe_allow_html=True)
+    s5.markdown(f'<div class="stat-card highlight"><div class="stat-label">Total no disfrutados</div><div class="stat-value">{format_duracion(total_nd_min)}</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -252,8 +292,6 @@ if run:
     with tc2:
         export_df = df[['Código','Empleado','Empresa','Centro de trabajo','Convenio',
                         'Máximo','Disfrutados','No disfrutados']].copy()
-        export_df.columns = ['Código','Empleado','Empresa','Centro de trabajo','Convenio',
-                             'Máximo','Disfrutados','No disfrutados']
         import io as _io
         buf = _io.BytesIO()
         export_df.to_excel(buf, index=False, engine='openpyxl')
@@ -266,10 +304,10 @@ if run:
             use_container_width=True,
         )
 
-    # Display table
+    # Display table (se muestran las columnas formateadas, pero se ordena/colorea por el valor en minutos)
     display_df = df[['Código','Empleado','Centro de trabajo','Convenio',
-                     'Máximo','Disfrutados','No disfrutados']].copy()
-    display_df = display_df.sort_values('No disfrutados', ascending=False).reset_index(drop=True)
+                     'Máximo','Disfrutados','No disfrutados','No_disfrutados_min']].copy()
+    display_df = display_df.sort_values('No_disfrutados_min', ascending=False).reset_index(drop=True)
 
     if search:
         mask = (
@@ -279,20 +317,22 @@ if run:
         )
         display_df = display_df[mask]
 
-    max_val = display_df['Máximo'].max() if len(display_df) > 0 else 1
+    max_val = display_df['No_disfrutados_min'].max() if len(display_df) > 0 else 1
 
-    def color_nd(val):
+    def color_nd(row):
+        val = row['No_disfrutados_min']
         if val <= 0:
-            return "background-color:#d8f3e3;color:#2d6a4f;font-weight:500;"
+            style = "background-color:#d8f3e3;color:#2d6a4f;font-weight:500;"
         elif val < max_val:
-            return "background-color:#fff0e0;color:#e07a1f;font-weight:500;"
+            style = "background-color:#fff0e0;color:#e07a1f;font-weight:500;"
         else:
-            return "background-color:#fdecea;color:#c0392b;font-weight:500;"
+            style = "background-color:#fdecea;color:#c0392b;font-weight:500;"
+        return [style if col == "No disfrutados" else "" for col in display_df.columns]
 
     st.dataframe(
-        display_df.style
-            .map(color_nd, subset=["No disfrutados"])
-            .format({"Máximo":"{:.2f}","Disfrutados":"{:.2f}","No disfrutados":"{:.2f}"}),
+        display_df.drop(columns=['No_disfrutados_min']).style.apply(
+            lambda r: color_nd(display_df.loc[r.name]), axis=1
+        ),
         use_container_width=True,
         height=min(600, 60 + len(display_df) * 38),
         column_config={
@@ -300,9 +340,9 @@ if run:
             "Empleado":          st.column_config.TextColumn("Empleado", width="large"),
             "Centro de trabajo": st.column_config.TextColumn("Centro", width="medium"),
             "Convenio":          st.column_config.TextColumn("Convenio", width="medium"),
-            "Máximo":            st.column_config.NumberColumn("Máximo", format="%.2f", width="small"),
-            "Disfrutados":       st.column_config.NumberColumn("Disfrutados", format="%.2f", width="small"),
-            "No disfrutados":    st.column_config.NumberColumn("No disfrutados", format="%.2f", width="small"),
+            "Máximo":            st.column_config.TextColumn("Máximo", width="small"),
+            "Disfrutados":       st.column_config.TextColumn("Disfrutados", width="small"),
+            "No disfrutados":    st.column_config.TextColumn("No disfrutados", width="small"),
         },
         hide_index=True,
     )
