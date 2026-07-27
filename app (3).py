@@ -325,6 +325,8 @@ if run:
 
     max_val = display_df['No_disfrutados_min'].max() if len(display_df) > 0 else 1
 
+    display_cols = [c for c in display_df.columns if c != 'No_disfrutados_min']
+
     def color_nd(row):
         val = row['No_disfrutados_min']
         if val <= 0:
@@ -333,7 +335,7 @@ if run:
             style = "background-color:#fff0e0;color:#e07a1f;font-weight:500;"
         else:
             style = "background-color:#fdecea;color:#c0392b;font-weight:500;"
-        return [style if col == "No disfrutados" else "" for col in display_df.columns]
+        return [style if col == "No disfrutados" else "" for col in display_cols]
 
     st.dataframe(
         display_df.drop(columns=['No_disfrutados_min']).style.apply(
