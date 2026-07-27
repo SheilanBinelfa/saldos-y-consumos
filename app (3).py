@@ -131,6 +131,12 @@ except Exception as e:
     st.error(f"Error leyendo los ficheros: {e}")
     st.stop()
 
+# Normalizar Código a texto en los tres ficheros (evita error de merge por dtypes distintos,
+# ej. "00781" leído como texto en un fichero y como número 781 en otro)
+for _df in (df_emp, df_sal, df_abs):
+    if 'Código' in _df.columns:
+        _df['Código'] = _df['Código'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+
 # Validate columns
 missing_emp = {'Empleado','Código','Estado','Convenio'} - set(df_emp.columns)
 missing_sal = {'Código','Tipo','Máximo','Unidad','Validados'} - set(df_sal.columns)
